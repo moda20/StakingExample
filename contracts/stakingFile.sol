@@ -1,13 +1,14 @@
 pragma solidity ^0.8.0;
 
+
 import "../node_modules/openzeppelin-solidity/contracts/token/ERC20/ERC20.sol";
 import "../node_modules/openzeppelin-solidity/contracts/utils/math/SafeMath.sol";
 import "../node_modules/openzeppelin-solidity/contracts/access/Ownable.sol";
 import "./rewardToken.sol";
+import "./stackableToken.sol";
 
+contract stakingFile is Ownable {
 
-
-contract stackableToken is ERC20, Ownable{
     struct stakeStructure {
         uint256 value;
         uint time;
@@ -19,69 +20,55 @@ contract stackableToken is ERC20, Ownable{
     address[] internal stakeholders;
 
 
-
-
     mapping(address => stakeStructure[]) internal stakes;
 
     mapping(address => uint256) internal rewards;
 
     address rewardTokenAddress;
+    address stakeTokenAddress;
 
-    constructor(address _owner, uint256 _supply)
-    ERC20("StakeableToken", "STX")
+    constructor(address _owner)
     public {
-        _mint(_owner, _supply);
+       transferOwnership(_owner);
     }
-
 
     function setRewardToken(address _rewardTokenAddress) public onlyOwner{
         rewardTokenAddress = _rewardTokenAddress;
     }
-
-
-    function burnTokens(address stakeholder, uint256 amount) public onlyOwner{
-        _burn(stakeholder, amount);
-    }
-    function mintTokens(address stakeholder, uint256 amount) public onlyOwner{
-        _mint(stakeholder, amount);
+    function setStakeToken(address _stakeTokenAddress) public onlyOwner{
+        stakeTokenAddress = _stakeTokenAddress;
     }
 
-    // ---------- STAKES ----------
-
-    /**
-     * @notice A method for a stakeholder to create a stake.
-     * @param _stake The size of the stake to be created.
-     */
     function createStake(uint256 _stake)
     public
     {
-        _burn(msg.sender, _stake);
+        stackableToken(stakeTokenAddress).burnTokens(msg.sender, _stake);
         if(stakes[msg.sender].length == 0) addStakeholder(msg.sender);
         stakes[msg.sender].push(stakeStructure(_stake, block.timestamp, stakes[msg.sender].length));
     }
 
-    /**
-     * @notice A method for a stakeholder to remove a stake.
-     * @param _stake The size of the stake to be removed.
-     * @param _id the id of the stake to remove from.
-     */
     function removeStake(uint _id, uint256 _stake)
     public
     {
+        require(stakes[msg.sender][_id].value != 0, "No stake with this Id");
         if(stakes[msg.sender][_id].value >= _stake) stakes[msg.sender][_id].value = stakes[msg.sender][_id].value.sub(_stake);
         if(stakes[msg.sender][_id].value < _stake) {
             stakes[msg.sender][_id].value = 0;
             delete stakes[msg.sender][_id];
         }
         if(stakes[msg.sender].length == 0) removeStakeholder(msg.sender);
-        _mint(msg.sender, _stake);
+        stackableToken(stakeTokenAddress).mintTokens(msg.sender, _stake);
     }
 
-    /**
-     * @notice A method to retrieve the stake for a stakeholder.
-     * @param _stakeholder The stakeholder to retrieve the stake for.
-     * @return uint256 The amount of wei staked for all the stakes.
-     */
+    function getAllStakeHolders()
+    public
+    view
+    onlyOwner
+    returns(address[] _stakeholders)
+    {
+        _stakeholders = stakeholders;
+    }
+
     function stakeOf(address _stakeholder)
     public
     view
@@ -94,10 +81,15 @@ contract stackableToken is ERC20, Ownable{
         return stakeSize;
     }
 
-    /**
-     * @notice A method to the aggregated stakes from all stakeholders.
-     * @return uint256 The aggregated stakes from all stakeholders.
-     */
+    function stakeValueOf(address _stakeholder, uint256 id)
+    public
+    view
+    returns(uint256)
+    {
+        require(stakes[_stakeholder][id].value != 0, "No stake with this ID");
+        return stakes[_stakeholder][id].value;
+    }
+
     function totalStakes()
     public
     view
@@ -110,14 +102,6 @@ contract stackableToken is ERC20, Ownable{
         return _totalStakes;
     }
 
-    // ---------- STAKEHOLDERS ----------
-
-    /**
-     * @notice A method to check if an address is a stakeholder.
-     * @param _address The address to verify.
-     * @return bool, uint256 Whether the address is a stakeholder,
-     * and if so its position in the stakeholders array.
-     */
     function isStakeholder(address _address)
     public
     view
@@ -129,10 +113,6 @@ contract stackableToken is ERC20, Ownable{
         return (false, 0);
     }
 
-    /**
-     * @notice A method to add a stakeholder.
-     * @param _stakeholder The stakeholder to add.
-     */
     function addStakeholder(address _stakeholder)
     public
     {
@@ -140,10 +120,6 @@ contract stackableToken is ERC20, Ownable{
         if(!_isStakeholder) stakeholders.push(_stakeholder);
     }
 
-    /**
-     * @notice A method to remove a stakeholder.
-     * @param _stakeholder The stakeholder to remove.
-     */
     function removeStakeholder(address _stakeholder)
     public
     {
@@ -154,12 +130,6 @@ contract stackableToken is ERC20, Ownable{
         }
     }
 
-    // ---------- REWARDS ----------
-
-    /**
-     * @notice A method to allow a stakeholder to check his rewards.
-     * @param _stakeholder The stakeholder to check rewards for.
-     */
     function rewardOf(address _stakeholder) public view returns(uint256){
         return rewards[_stakeholder];
     }
@@ -167,10 +137,7 @@ contract stackableToken is ERC20, Ownable{
     function myReward() public view returns(uint256){
         return rewards[msg.sender];
     }
-    /**
-     * @notice A method to the aggregated rewards from all stakeholders.
-     * @return uint256 The aggregated rewards from all stakeholders.
-     */
+
     function totalRewards() public view returns(uint256){
         uint256 _totalRewards = 0;
         for (uint256 s = 0; s < stakeholders.length; s += 1){
@@ -192,14 +159,14 @@ contract stackableToken is ERC20, Ownable{
 
         for (uint256 s = 0; s < stakes[_stakeholder].length; s += 1){
             if((block.timestamp - stakes[_stakeholder][s].time) > 1 days){
-                if(stakes[_stakeholder][s].value > 100){
-                    _finalReward = _finalReward.add(((block.timestamp - stakes[_stakeholder][s].time) / 1 days) * 10);
+                if(stakes[_stakeholder][s].value >= 10000){
+                    _finalReward = _finalReward.add(((block.timestamp - stakes[_stakeholder][s].time) / 1 days) * 30);
                 }
-                if(stakes[_stakeholder][s].value > 1000){
+                if(stakes[_stakeholder][s].value >= 1000){
                     _finalReward = _finalReward.add(((block.timestamp - stakes[_stakeholder][s].time) / 1 days) * 20);
                 }
-                if(stakes[_stakeholder][s].value > 10000){
-                    _finalReward = _finalReward.add(((block.timestamp - stakes[_stakeholder][s].time) / 1 days) * 30);
+                if(stakes[_stakeholder][s].value >= 100){
+                    _finalReward = _finalReward.add(((block.timestamp - stakes[_stakeholder][s].time) / 1 days) * 10);
                 }
             }
         }
@@ -249,7 +216,6 @@ contract stackableToken is ERC20, Ownable{
             }
             rewards[msg.sender] = 0;
             rewardToken(rewardTokenAddress).withdrawReward(msg.sender, reward);
-            _mint(msg.sender, reward);
         }
     }
 }
